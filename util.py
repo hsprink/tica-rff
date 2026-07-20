@@ -806,7 +806,6 @@ def standardize_and_pool_features(
     feat_scheme,
     dir_base,
     mean_pooling,
-    n_residues=None,
     chunk_size=256,
 ):
     """
@@ -818,6 +817,10 @@ def standardize_and_pool_features(
         data: list of trajectory arrays, one per trajectory. Shape
             (n_frames, n_residues, n_channels) for 'BioEmu_L1_features', or
             (n_frames, n_channels) if the scheme is already pooled.
+            n_residues may differ between trajectories (e.g. different-sized
+            proteins) -- only n_channels must match across all of them, since
+            standardization statistics are per-channel and pooling is applied
+            independently per trajectory using its own residue count.
         feat_scheme: 'BioEmu_L1_features' (per-residue) or
             'BioEmu_L1_features_pooled' (already pooled) -- determines the
             expected array dimensionality and the caching subdirectory.
@@ -826,27 +829,25 @@ def standardize_and_pool_features(
         mean_pooling: if True and the scheme isn't already pooled, mean-pool
             the standardized per-residue features over residues (via
             mean_pool_standardized_flat) to a single per-frame vector.
-        n_residues: number of residues, used to reshape the flattened
-            standardized features back to per-residue before mean-pooling.
-            Auto-derived from data[0].shape[1] for the unpooled scheme if not
-            given explicitly.
         chunk_size: number of frames processed per chunk when computing
             standardization statistics / standardizing (bounds memory use).
 
     Returns:
         list of standardized (and optionally mean-pooled) trajectory arrays,
-        one per input trajectory, in the same order as `data`.
+        one per input trajectory, in the same order as `data`. If
+        mean_pooling is used, trajectories from differently-sized proteins
+        all end up with the same n_channels-dimensional per-frame vector and
+        can be combined in one TICA fit despite differing residue counts.
     """
     expected_ndim = 3 if feat_scheme == 'BioEmu_L1_features' else 2
 
     if not data:
         raise ValueError("No trajectories were provided.")
 
-    # Validate input dimensionality and channel count.
+    # Validate input dimensionality and channel count. n_residues (axis 1 of
+    # the 3D/unpooled case) may differ per trajectory -- only n_channels
+    # (the last axis) needs to match across all of them.
     n_channels = data[0].shape[-1]
-
-    if n_residues is None and expected_ndim == 3:
-        n_residues = data[0].shape[1]
 
     for traj_idx, traj in enumerate(data):
         if traj.ndim != expected_ndim:
@@ -861,11 +862,7 @@ def standardize_and_pool_features(
                 f"but the first trajectory has {n_channels}."
             )
 
-        if expected_ndim == 3 and traj.shape[1] != n_residues:
-            raise ValueError(
-                f"Trajectory {traj_idx} has {traj.shape[1]} residues, "
-                f"but the first trajectory has {n_residues}."
-            )
+    n_residues_per_traj = [traj.shape[1] for traj in data] if expected_ndim == 3 else [None] * len(data)
 
     processed_dir = Path(dir_base) / feat_scheme / "processed_features"
     processed_dir.mkdir(parents=True, exist_ok=True)
@@ -1054,10 +1051,10 @@ def standardize_and_pool_features(
         data_for_tica_base = [
             mean_pool_standardized_flat(
                 standardized_flat=traj,
-                n_residues=n_residues,
+                n_residues=n_residues_per_traj[traj_idx],
                 n_channels=n_channels,
             )
-            for traj in data_for_tica_base
+            for traj_idx, traj in enumerate(data_for_tica_base)
         ]
         print("Mean-pooled TICA input shapes:", [traj.shape for traj in data_for_tica_base])
 
