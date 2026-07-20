@@ -755,52 +755,6 @@ def evaluate_eigenfunctions(evecs_K, lifting, domain, W=None):
     return eigenfunction_approx
 
 
-def mean_pool_standardized_flat(
-    standardized_flat: np.ndarray,
-    n_residues: int,
-    n_channels: int = 512,
-) -> np.ndarray:
-    """
-    Convert standardized flattened features to residue-mean pooled features.
-
-    Parameters
-    ----------
-    standardized_flat
-        Shape: (n_frames, n_residues * n_channels)
-
-    n_residues
-        Number of protein residues.
-
-    n_channels
-        Encoder dimension. Defaults to 512.
-
-    Returns
-    -------
-    pooled
-        Shape: (n_frames, n_channels)
-    """
-    if standardized_flat.ndim != 2:
-        raise ValueError(
-            f"Expected a 2D array, got shape {standardized_flat.shape}."
-        )
-
-    expected_dim = n_residues * n_channels
-
-    if standardized_flat.shape[1] != expected_dim:
-        raise ValueError(
-            f"Feature dimension is {standardized_flat.shape[1]}, "
-            f"but expected {n_residues} * {n_channels} = {expected_dim}."
-        )
-
-    standardized_3d = standardized_flat.reshape(
-        standardized_flat.shape[0],
-        n_residues,
-        n_channels,
-    )
-
-    return standardized_3d.mean(axis=1, dtype=np.float32)
-
-
 def standardize_and_pool_features(
     data,
     feat_scheme,
@@ -809,26 +763,32 @@ def standardize_and_pool_features(
     chunk_size=256,
 ):
     """
-    Standardize raw BioEmu_L1_features / BioEmu_L1_features_pooled
-    trajectories to per-channel zero mean and unit variance (cached to
-    disk), then optionally mean-pool over residues for TICA.
+    Optionally mean-pool raw BioEmu_L1_features trajectories over residues,
+    then standardize (per-channel zero mean / unit variance, cached to disk).
+
+    Pooling is done *before* standardizing (when applicable) rather than
+    after: standardization statistics are computed over whatever `data` is
+    at that point, so pooling first means every frame -- regardless of how
+    many residues its source protein has -- contributes equally to the
+    statistics. Standardizing raw per-residue values first would instead
+    weight the statistics by each trajectory's residue count, letting
+    larger proteins dominate the normalization applied to every trajectory,
+    including smaller ones. This matters whenever trajectories from
+    differently-sized proteins are combined in one call.
 
     Parameters:
         data: list of trajectory arrays, one per trajectory. Shape
             (n_frames, n_residues, n_channels) for 'BioEmu_L1_features', or
             (n_frames, n_channels) if the scheme is already pooled.
             n_residues may differ between trajectories (e.g. different-sized
-            proteins) -- only n_channels must match across all of them, since
-            standardization statistics are per-channel and pooling is applied
-            independently per trajectory using its own residue count.
+            proteins) -- only n_channels must match across all of them.
         feat_scheme: 'BioEmu_L1_features' (per-residue) or
             'BioEmu_L1_features_pooled' (already pooled) -- determines the
             expected array dimensionality and the caching subdirectory.
         dir_base: directory under which cached stats/standardized trajectories
-            are stored, at f'{dir_base}/{feat_scheme}/processed_features/'.
+            are stored, at f'{dir_base}/{feat_scheme}/processed_features(_pooled)/'.
         mean_pooling: if True and the scheme isn't already pooled, mean-pool
-            the standardized per-residue features over residues (via
-            mean_pool_standardized_flat) to a single per-frame vector.
+            each trajectory over its own residues before standardizing.
         chunk_size: number of frames processed per chunk when computing
             standardization statistics / standardizing (bounds memory use).
 
@@ -862,9 +822,21 @@ def standardize_and_pool_features(
                 f"but the first trajectory has {n_channels}."
             )
 
-    n_residues_per_traj = [traj.shape[1] for traj in data] if expected_ndim == 3 else [None] * len(data)
+    pool_before_standardizing = mean_pooling and expected_ndim == 3
 
-    processed_dir = Path(dir_base) / feat_scheme / "processed_features"
+    if pool_before_standardizing:
+        print("Mean-pooling each trajectory over its own residues before "
+              "standardizing (so standardization weights every frame "
+              "equally, regardless of residue count)...")
+        data = [traj.mean(axis=1, dtype=np.float32) for traj in data]
+        print("Pooled trajectory shapes:", [traj.shape for traj in data])
+
+    # From this point on, `data` is 2D per trajectory whenever pooling
+    # happened above (or the scheme was already pooled coming in).
+    stats_ndim = 2 if pool_before_standardizing else expected_ndim
+
+    cache_subdir = "processed_features_pooled" if pool_before_standardizing else "processed_features"
+    processed_dir = Path(dir_base) / feat_scheme / cache_subdir
     processed_dir.mkdir(parents=True, exist_ok=True)
 
     stats_file = processed_dir / "standardization_stats.npz"
@@ -887,7 +859,7 @@ def standardize_and_pool_features(
     #
     # Unpooled: (1, 1, n_channels)
     # Pooled:   (1, n_channels)
-    stats_shape = (1,) * (expected_ndim - 1) + (n_channels,)
+    stats_shape = (1,) * (stats_ndim - 1) + (n_channels,)
 
     cache_available = stats_file.exists()
 
@@ -992,15 +964,11 @@ def standardize_and_pool_features(
 
         std_safe_1d = np.where(small_std, 1.0, std_1d)
 
-        # Reshape for broadcasting:
+        # Reshape for broadcasting (stats_shape already accounts for whether
+        # `data` was pooled to 2D above):
         #
-        # BioEmu_L1_features:
-        #     (n_frames, n_residues, n_channels)
-        #     stats shape: (1, 1, n_channels)
-        #
-        # BioEmu_L1_features_pooled:
-        #     (n_frames, n_channels)
-        #     stats shape: (1, n_channels)
+        # Unpooled (n_frames, n_residues, n_channels): stats shape (1, 1, n_channels)
+        # Pooled or already-pooled (n_frames, n_channels): stats shape (1, n_channels)
         mean = mean_1d.reshape(stats_shape)
         std = std_1d.reshape(stats_shape)
         std_safe = std_safe_1d.reshape(stats_shape)
@@ -1046,16 +1014,5 @@ def standardize_and_pool_features(
             del standardized_flat
 
             data_for_tica_base.append(np.load(cache_file, mmap_mode="r"))
-
-    if mean_pooling and 'pooled' not in feat_scheme:
-        data_for_tica_base = [
-            mean_pool_standardized_flat(
-                standardized_flat=traj,
-                n_residues=n_residues_per_traj[traj_idx],
-                n_channels=n_channels,
-            )
-            for traj_idx, traj in enumerate(data_for_tica_base)
-        ]
-        print("Mean-pooled TICA input shapes:", [traj.shape for traj in data_for_tica_base])
 
     return data_for_tica_base
