@@ -61,7 +61,10 @@ Key fields in `tica_rff`:
   matrices with their transpose before eigendecomposition. `remove_mean`:
   subtract the mean before fitting.
 - `load_intermediate_results` / `save_intermediate_results`: cache/reuse
-  intermediate matrices (covariances, whitening, EDMD fit) under `Results/`.
+  everything under `Results/` — covariance matrices, whitening, the fitted
+  TICA/EDMD/PCCA objects. Set both to `false` to force a fully fresh run
+  (e.g. when comparing settings like `batchwise_tica` that don't change the
+  cache's file path) without touching or overwriting any existing cache.
 
 `coarse_grained_model`:
 

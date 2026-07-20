@@ -40,13 +40,14 @@ class CoarseGrainedModel:
 
         path_pcca = self.dir_exports / f'pcca_{self.n_pcca}_states.pickle'
         self.pcca_op = PCCAoperator(nev=self.n_pcca, lag=tica_rff_model.lag, traj_lengths=traj_lengths, saving_dir=None)
-        if path_pcca.is_file():
+        if tica_rff_model.load_intermediate_results and path_pcca.is_file():
             set_attrs_from_dict(self.pcca_op, load_from_file(path_pcca))
         else:
             rescaled_eigen_data = self.pcca_op.rescale_eigen_projected_data(data_val_along_evec[:, :self.n_pcca], cplx=False)
             self.pcca_op.run_simplex(rescaled_eigen_data)
             self.pcca_op.compute_metastable_indices(cut=self.cut)
-            save_to_file(self.pcca_op, path_pcca, overwrite=True)
+            if tica_rff_model.save_intermediate_results:
+                save_to_file(self.pcca_op, path_pcca, overwrite=True)
 
         self.pcca_op.print_state_statistics(cut=self.cut)
 

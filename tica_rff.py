@@ -108,7 +108,7 @@ class TicaRffModel:
         self.tica_op = TICA(lag=self.lag)
 
         path_tica_results = self.dir_tica_lag / f'tica_lag={self.lag}.pickle'
-        if path_tica_results.is_file():
+        if self.load_intermediate_results and path_tica_results.is_file():
             loaded = load_from_file(path_tica_results)
             set_attrs_from_dict(self.tica_op, loaded)
         else:
@@ -127,7 +127,8 @@ class TicaRffModel:
                 dir_base=self.dir_tica,
                 n_ev=self.n_ev,
             )
-            save_to_file(self.tica_op, path_tica_results, overwrite=True)
+            if self.save_intermediate_results:
+                save_to_file(self.tica_op, path_tica_results, overwrite=True)
         return self.tica_op
 
     def project(self):
@@ -145,7 +146,7 @@ class TicaRffModel:
 
         path_edmd_results = self.dir_edmd / Path(f'edmd_results_lag={self.lag}.pickle')
 
-        if path_edmd_results.is_file():
+        if self.load_intermediate_results and path_edmd_results.is_file():
             loaded = load_from_file(path_edmd_results)
             set_attrs_from_dict(self.tica_rff_op, loaded)
         else:
@@ -158,7 +159,8 @@ class TicaRffModel:
                 tol=1e-8,
                 n_ev=self.n_ev,
             )
-            save_to_file(self.tica_rff_op, path_edmd_results, overwrite=True)
+            if self.save_intermediate_results:
+                save_to_file(self.tica_rff_op, path_edmd_results, overwrite=True)
 
         path_edmd_timescales = self.dir_edmd / Path(f'timescales_lag={self.lag}.npy')
         self.ts_ticarff = np.round(np.array(self.tica_rff_op.get_timescales(dt=self.dt)), 2)
