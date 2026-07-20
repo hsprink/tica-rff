@@ -44,10 +44,13 @@ class TicaRffModel:
             matters for physical-time reporting (physical lag, timescales),
             which is computed lazily by physical_lag(). That method requires
             dt[i] * stride[i] * lag[i] to be the same for every trajectory
-            (the actual physical lag time) and raises ValueError otherwise --
-            e.g. dt=[0.002, 0.001], stride=[1, 1], lag=[30, 60] both give
-            0.06. Nothing else in the pipeline (data loading, TICA/EDMD
-            fitting, PCCA) uses dt at all.
+            (the actual physical lag time); if it isn't, physical_lag()
+            prints a warning and returns None instead of raising, so fitting/
+            PCCA/the transition network are unaffected and timescale/
+            physical-lag reporting just shows up as N/A. E.g.
+            dt=[0.002, 0.001], stride=[1, 1], lag=[30, 60] both give 0.06.
+            Nothing else in the pipeline (data loading, TICA/EDMD fitting,
+            PCCA) uses dt at all.
     """
 
     def __init__(
@@ -122,11 +125,13 @@ class TicaRffModel:
     def physical_lag(self):
         """
         The physical time gap between X(t) and Y(t+lag), i.e.
-        dt[i] * stride[i] * lag[i] -- required to be the same for every
-        trajectory (raises ValueError otherwise). Computed lazily (not at
-        construction time) since dt/stride/lag are otherwise independent of
-        each other and only need to agree when physical-time reporting
-        (timescales, plot titles) is actually requested.
+        dt[i] * stride[i] * lag[i], which must be the same for every
+        trajectory to be well-defined; returns None (with a printed warning)
+        if it isn't, rather than raising -- fitting/PCCA/the transition
+        network don't need this value and are unaffected either way. Computed
+        lazily (not at construction time) since dt/stride/lag are otherwise
+        independent of each other and only need to agree when physical-time
+        reporting (timescales, plot titles) is actually requested.
         """
         n = len(self.traj_paths)
         dts = self.dt if isinstance(self.dt, list) else [self.dt] * n
@@ -135,12 +140,14 @@ class TicaRffModel:
 
         physical_lags = [d * s * l for d, s, l in zip(dts, strides, lags)]
         if len(set(physical_lags)) != 1:
-            raise ValueError(
-                f"dt {self.dt}, stride {self.stride}, and lag {self.lag} are inconsistent: "
-                f"dt[i] * stride[i] * lag[i] (the physical time gap between X(t) and "
-                f"Y(t+lag)) must be the same for every trajectory, got {physical_lags} "
-                f"for trajectories {[str(p) for p in self.traj_paths]}."
+            print(
+                f"Warning: dt {self.dt}, stride {self.stride}, and lag {self.lag} are "
+                f"inconsistent (dt[i] * stride[i] * lag[i] gives {physical_lags}, not "
+                f"the same for every trajectory) -- physical-time reporting (timescales, "
+                f"'physical lag' in plot titles) is undefined and will be skipped/shown "
+                f"as N/A. This doesn't affect fitting, PCCA, or the transition network."
             )
+            return None
         return physical_lags[0]
 
     def load_data(self):
@@ -220,24 +227,32 @@ class TicaRffModel:
             if self.save_intermediate_results:
                 save_to_file(self.tica_rff_op, path_edmd_results, overwrite=True)
 
-        path_edmd_timescales = self.dir_edmd / Path(f'timescales_lag={self.lag}{self.n_ev_path_extension}.npy')
-        # dt=physical_lag(), lag=1: get_timescales' formula only uses the
-        # dt*lag product, and physical_lag() is already that full product
-        # (dt[i]*stride[i]*lag[i], validated equal across trajectories).
-        self.ts_ticarff = np.round(np.array(self.tica_rff_op.get_timescales(dt=self.physical_lag(), lag=1)), 2)
-        save_to_file(self.ts_ticarff, path_edmd_timescales)
+        physical_lag = self.physical_lag()
+        if physical_lag is None:
+            self.ts_ticarff = None
+        else:
+            path_edmd_timescales = self.dir_edmd / Path(f'timescales_lag={self.lag}{self.n_ev_path_extension}.npy')
+            # dt=physical_lag(), lag=1: get_timescales' formula only uses the
+            # dt*lag product, and physical_lag() is already that full product
+            # (dt[i]*stride[i]*lag[i], validated equal across trajectories).
+            self.ts_ticarff = np.round(np.array(self.tica_rff_op.get_timescales(dt=physical_lag, lag=1)), 2)
+            save_to_file(self.ts_ticarff, path_edmd_timescales)
         return self.tica_rff_op
 
     def plot_eigenfunctions(self):
         evecs_K = np.real(self.tica_rff_op.right_eigenvectors)[:, 1:]
         self.domain = np.real(np.vstack(self.tica_projected_data))
 
+        physical_lag = self.physical_lag()
+        physical_lag_str = 'N/A' if physical_lag is None else round(physical_lag, 3)
+        timescales_str = 'N/A' if self.ts_ticarff is None else self.ts_ticarff[1:self.n_eigenfunctions_to_plot+1]
+
         plot_eigenfunctions(
             evecs_K, self.Psi, self.domain, W=None, k=self.n_eigenfunctions_to_plot,
             title=(
                 f'd_tica={self.d_tica}, sigma={self.scaling}, p={self.p}, '
-                f'lag={self.lag}, physical lag={round(self.physical_lag(), 3)}, '
-                f'timescales={self.ts_ticarff[1:self.n_eigenfunctions_to_plot+1]}'
+                f'lag={self.lag}, physical lag={physical_lag_str}, '
+                f'timescales={timescales_str}'
             ),
             path=f'{self.dir_edmd}/eigenfunctions_{self.n_eigenfunctions_to_plot}{self.n_ev_path_extension}.png',
         )

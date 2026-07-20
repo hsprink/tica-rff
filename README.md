@@ -34,15 +34,17 @@ Key fields in `tica_rff`:
   - `dt` is the time per *raw* (pre-stride) frame for that trajectory.
 
   `stride`/`lag` are pure index-domain quantities used for data loading and
-  fitting — they're never checked against `dt` at startup, and everything up
-  through PCCA runs regardless of whether they're physically consistent.
-  `dt` only matters once you ask for physical-time reporting (timescales,
-  the "physical lag" in plot titles), which is computed lazily by
+  fitting — they're never checked against `dt`, and fitting, PCCA, and the
+  transition network all run regardless of whether they're physically
+  consistent. `dt` only matters for physical-time reporting (timescales, the
+  "physical lag" in plot titles), computed lazily by
   `TicaRffModel.physical_lag()`. That method requires `dt[i] * stride[i] *
   lag[i]` (the actual physical time gap) to be the same for every
-  trajectory, and raises `ValueError` there (not at construction) if not.
-  E.g. `dt=[0.002, 0.001], stride=[1, 1], lag=[30, 60]` both give `0.06`, as
-  do `stride=[1, 10], lag=[30, 3]` with a shared `dt`.
+  trajectory; if it isn't, `physical_lag()` returns `None` (with a printed
+  warning) instead of raising, and timescales/physical-lag show up as `N/A`
+  in plots/titles rather than breaking anything. E.g.
+  `dt=[0.002, 0.001], stride=[1, 1], lag=[30, 60]` both give `0.06`, as do
+  `stride=[1, 10], lag=[30, 3]` with a shared `dt`.
 - `feat_scheme` / `mean_pooling`: **must be set consistently with the actual
   shape of your trajectory files.**
   - `"closest-heavy"`: pairwise closest-heavy-atom distances, already a fixed
