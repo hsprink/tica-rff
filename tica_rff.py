@@ -77,7 +77,15 @@ class TicaRffModel:
         self.dt = self.stride * dt
         self.n_ev_path_extension = f'_n_ev={self.n_ev}'
 
-        self.dir_tica = Path(f'{self.dir_res}/{self.feat_scheme}/stride={self.stride}')
+        self.dir_tica = Path(f'{self.dir_res}/{self.feat_scheme}')
+        if self.feat_scheme == 'BioEmu_L1_features':
+            # mean_pooling changes the resulting feature dimensionality (pooled
+            # per-frame vector vs. flattened per-residue vector), so it needs
+            # its own cache subfolder here. It has no effect for 'closest-heavy'
+            # (never routed through pooling) or '..._pooled' schemes (pooling
+            # is always skipped there, regardless of this flag).
+            self.dir_tica = self.dir_tica / f'mean_pooling={self.mean_pooling}'
+        self.dir_tica = self.dir_tica / f'stride={self.stride}'
         self.dir_tica.mkdir(exist_ok=True, parents=True)
 
         self.dir_tica_lag = self.dir_tica / Path(f'lag={self.lag}')

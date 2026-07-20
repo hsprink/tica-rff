@@ -84,4 +84,6 @@ Key fields in `tica_rff`:
 
 Results (fitted models, intermediate matrices, plots) are written under
 `Results/<protein_name>/...`, mirroring the parameters used (feature scheme,
-stride, lag, RFF params, PCCA cut).
+mean_pooling — for `feat_scheme="BioEmu_L1_features"` only, since that's the
+only case where it changes the resulting features — stride, lag, RFF params,
+PCCA cut).
