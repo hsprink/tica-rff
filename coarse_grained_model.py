@@ -38,7 +38,7 @@ class CoarseGrainedModel:
 
         traj_lengths = [len(traj) for traj in tica_rff_model.tica_projected_data]
 
-        path_pcca = self.dir_exports / f'pcca_{self.n_pcca}_states.pickle'
+        path_pcca = self.dir_exports / f'pcca_{self.n_pcca}_states{tica_rff_model.n_ev_path_extension}.pickle'
         self.pcca_op = PCCAoperator(nev=self.n_pcca, lag=tica_rff_model.lag, traj_lengths=traj_lengths, saving_dir=None)
         if tica_rff_model.load_intermediate_results and path_pcca.is_file():
             set_attrs_from_dict(self.pcca_op, load_from_file(path_pcca))

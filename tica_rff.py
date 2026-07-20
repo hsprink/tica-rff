@@ -115,7 +115,7 @@ class TicaRffModel:
     def fit_tica(self):
         self.tica_op = TICA(lag=self.lag)
 
-        path_tica_results = self.dir_tica_lag / f'tica_lag={self.lag}.pickle'
+        path_tica_results = self.dir_tica_lag / f'tica_lag={self.lag}{self.n_ev_path_extension}.pickle'
         if self.load_intermediate_results and path_tica_results.is_file():
             loaded = load_from_file(path_tica_results)
             set_attrs_from_dict(self.tica_op, loaded)
@@ -152,7 +152,7 @@ class TicaRffModel:
 
         self.tica_rff_op = EDMD(lag=self.lag, Phi=self.Psi)
 
-        path_edmd_results = self.dir_edmd / Path(f'edmd_results_lag={self.lag}.pickle')
+        path_edmd_results = self.dir_edmd / Path(f'edmd_results_lag={self.lag}{self.n_ev_path_extension}.pickle')
 
         if self.load_intermediate_results and path_edmd_results.is_file():
             loaded = load_from_file(path_edmd_results)
@@ -170,7 +170,7 @@ class TicaRffModel:
             if self.save_intermediate_results:
                 save_to_file(self.tica_rff_op, path_edmd_results, overwrite=True)
 
-        path_edmd_timescales = self.dir_edmd / Path(f'timescales_lag={self.lag}.npy')
+        path_edmd_timescales = self.dir_edmd / Path(f'timescales_lag={self.lag}{self.n_ev_path_extension}.npy')
         self.ts_ticarff = np.round(np.array(self.tica_rff_op.get_timescales(dt=self.dt)), 2)
         save_to_file(self.ts_ticarff, path_edmd_timescales)
         return self.tica_rff_op
