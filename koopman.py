@@ -365,7 +365,7 @@ class TransferOperator(ABC):
         self.right_eigenvectors = W @ eigvecs[:, :rank_whitening]
 
 
-    def get_timescales(self, N_non_trivial=None, skip_trivial=False, dt=None):
+    def get_timescales(self, N_non_trivial=None, skip_trivial=False, dt=None, lag=None):
         """
         Compute implied timescales -dt * lag / log(eigenvalue) from the fitted
         eigenvalues.
@@ -376,6 +376,11 @@ class TransferOperator(ABC):
             skip_trivial: if True, drop the leading eigenvalue (normally ~1,
                 corresponding to the stationary/non-decaying process).
             dt: physical time per frame; defaults to self.dt if not given.
+            lag: lag to use in the formula; defaults to self.lag if not given.
+                Pass this explicitly when self.lag isn't a single physically
+                meaningful number (e.g. it's a list of per-trajectory index
+                shifts) -- self.lag itself is only ever a plain index shift,
+                used as-is for whatever fitting/caching needs it elsewhere.
 
         Returns:
             array of real-valued timescales, same units as dt.
@@ -384,6 +389,9 @@ class TransferOperator(ABC):
             dt = self.dt
         if dt is None:
             raise ValueError('need dt for timescale computation.')
+
+        if lag is None:
+            lag = self.lag
 
         a = 0
         b = None
@@ -396,7 +404,7 @@ class TransferOperator(ABC):
 
         if self.timescales is None:
             with np.errstate(divide="ignore", invalid="ignore"):
-                self.timescales = -dt * self.lag / np.log(self.eigenvalues)
+                self.timescales = -dt * lag / np.log(self.eigenvalues)
 
         return np.real(self.timescales[a:b])
     
@@ -538,17 +546,22 @@ def split_by_lag(data, lag):
     """
     Parameters:
         data: array (m, d) or list of arrays (m_i, d)
-        lag: int
+        lag: int, or list of int (one per trajectory) if data is a list
 
     Returns:
-        X: array (m-lag, d) or (sum of (m_i-lag), d)
-        Y: array (m-lag, d) or (sum of (m_i-lag), d)
+        X: array (m-lag, d) or (sum of (m_i-lag_i), d)
+        Y: array (m-lag, d) or (sum of (m_i-lag_i), d)
     """
 
     if isinstance(data, list) or isinstance(data, tuple) or (isinstance(data, np.ndarray) and data.ndim == 3):
-        X = np.vstack([traj[:-lag] for traj in data])
-        Y = np.vstack([traj[lag:] for traj in data])
+        lags = lag if isinstance(lag, list) else [lag] * len(data)
+        if len(lags) != len(data):
+            raise ValueError(f'lag list (len {len(lags)}) must match number of trajectories (len {len(data)}).')
+        X = np.vstack([traj[:-l] for traj, l in zip(data, lags)])
+        Y = np.vstack([traj[l:] for traj, l in zip(data, lags)])
     elif isinstance(data, np.ndarray):
+        if isinstance(lag, list):
+            raise ValueError('Per-trajectory lag list requires data to be a list of trajectories, not a single array.')
         X = data[:-lag]
         Y = data[lag:]
     return X, Y
@@ -727,12 +740,15 @@ def compute_cov_from_batches(data,
     data: list of arrays (m_i, d) or array (m, d)
         trajectory data to compute covariance from
 
-    lag: int or None
+    lag: int, list of int (one per trajectory), or None
         lag time for lagged covariance. If None, only instantaneous covariance on full data set is computed.
-    
+        A list lets each trajectory use its own index shift for pairing X(t)
+        with Y(t+lag) -- e.g. when combining trajectories with different
+        native frame intervals.
+
     batch_size: int
-        size of batches to process data in. 
-    
+        size of batches to process data in.
+
     compute_inst: bool
         whether to compute instantaneous covariance matrix (C0) or not. If False, only lagged covariance (Ct) is computed.
 
@@ -745,7 +761,7 @@ def compute_cov_from_batches(data,
 
     mean: array (d,) or None
         mean to subtract from data before covariance computation. If None, mean is computed from data.
-    
+
     remove_mean: bool
         whether to remove mean from data before covariance computation. If True, mean is computed from data if not provided as an argument, and subtracted from data.
     '''
@@ -756,17 +772,25 @@ def compute_cov_from_batches(data,
         for traj in data:
             if not isinstance(traj, np.ndarray):
                 raise ValueError('All trajectories should be numpy arrays.')
-            
+
     else:
         raise ValueError('Data should be a numpy array or a list of numpy arrays.')
-    
+
     if lag is None:
         compute_inst = True
         full_data_C0 = True
         compute_lagged = False
-    
+        lags = [None] * len(data)
+    elif isinstance(lag, list):
+        if len(lag) != len(data):
+            raise ValueError(f'lag list (len {len(lag)}) must match number of trajectories (len {len(data)}).')
+        if any((not isinstance(l, int) or l < 0) for l in lag):
+            raise ValueError('Every entry of lag should be a non-negative integer.')
+        lags = lag
     elif not isinstance(lag, int) or lag < 0:
         raise ValueError('Lag should be a non-negative integer.')
+    else:
+        lags = [lag] * len(data)
 
     assert compute_inst or compute_lagged, 'At least one of compute_inst and compute_lagged should be True.'
 
@@ -784,15 +808,17 @@ def compute_cov_from_batches(data,
 
     for i, curr_traj in enumerate(data):
 
+        lag_i = lags[i]
+
         curr_m = curr_traj.shape[0]
         m += curr_m
         if compute_lagged:
-            if lag == 0:
+            if lag_i == 0:
                 s_x_lagged += np.sum(curr_traj, axis=0)
                 s_y_lagged += np.sum(curr_traj, axis=0)
             else:
-                s_x_lagged += np.sum(curr_traj[:-lag], axis=0)
-                s_y_lagged += np.sum(curr_traj[lag:], axis=0)
+                s_x_lagged += np.sum(curr_traj[:-lag_i], axis=0)
+                s_y_lagged += np.sum(curr_traj[lag_i:], axis=0)
         prev_batch = None
         n_batches = int(np.ceil(curr_m / batch_size))
 
@@ -803,58 +829,72 @@ def compute_cov_from_batches(data,
             curr_batch = curr_traj[start:end]
 
             if (not full_data_C0) and (i_batch == n_batches - 1):
-                X = curr_batch[:-lag]
+                X = curr_batch[:-lag_i]
             else:
                 X = curr_batch
 
             if compute_inst:
                 s_C0 += np.sum(X, axis=0)
-            
+
             if compute_inst:
                 C0_batches += np.dot(X.T, X)
 
             if compute_lagged:
                 curr_batch_length = curr_batch.shape[0]
-                if i_batch > 0 or batch_size >= curr_m:
-                    if lag <= curr_batch_length:
-                        x_i = prev_batch
-                        y_i = np.vstack((prev_batch[lag:], curr_batch[:lag]))
+                if n_batches == 1:
+                    # Entire trajectory fits in this one batch -- there's no
+                    # prev_batch to pair with, so just compute the interior
+                    # lag-pairs directly (if the trajectory is even long
+                    # enough for lag_i to produce any pairs at all).
+                    if lag_i < curr_batch_length:
+                        x_i = curr_batch[:-lag_i]
+                        y_i = curr_batch[lag_i:]
                         Ct_batches += np.dot(x_i.T, y_i)
 
                         if symmetrize:
                             Ct_batches += np.dot(y_i.T, x_i)
-                        
+                elif i_batch > 0:
+                    if lag_i <= curr_batch_length:
+                        x_i = prev_batch
+                        y_i = np.vstack((prev_batch[lag_i:], curr_batch[:lag_i]))
+                        Ct_batches += np.dot(x_i.T, y_i)
+
+                        if symmetrize:
+                            Ct_batches += np.dot(y_i.T, x_i)
+
                         if i_batch == n_batches - 1:
-                            x_i = curr_batch[:-lag]
-                            y_i = curr_batch[lag:]
+                            x_i = curr_batch[:-lag_i]
+                            y_i = curr_batch[lag_i:]
                             Ct_batches += np.dot(x_i.T, y_i)
 
                             if symmetrize:
                                 Ct_batches += np.dot(y_i.T, x_i)
-                            # s_y += np.sum(curr_batch[lag:], axis=0)
+                            # s_y += np.sum(curr_batch[lag_i:], axis=0)
                     else:
                         # must be last batch -> take for Y everything until the end + what is necessary from prev batch
                         print('lag larger than current batch size, special handling')
-                        print('lag', lag, 'prev batch shape', prev_batch.shape, 'curr batch shape', curr_batch.shape)
-                        Y = np.vstack((prev_batch[lag:], curr_batch))
+                        print('lag', lag_i, 'prev batch shape', prev_batch.shape, 'curr batch shape', curr_batch.shape)
+                        Y = np.vstack((prev_batch[lag_i:], curr_batch))
                         index_from_previous = Y.shape[0]
                         print('Y shape', Y.shape, 'index from previous', index_from_previous)
                         Ct_batches += np.dot(prev_batch[:index_from_previous].T, Y)
 
                 prev_batch = curr_batch
-    
+
             s += np.sum(curr_batch, axis=0)
     
     if mean is None:
         mean = s / m
         
+    total_lag_frames = sum(lags)
+
     if full_data_C0:
         denom_x = m
     else:
-        denom_x = m - n_trajs * lag
+        denom_x = m - total_lag_frames
 
     if compute_lagged:
-        denom_y = m - n_trajs * lag
+        denom_y = m - total_lag_frames
     
     if compute_inst:
         mean_C0 = s_C0 / denom_x
