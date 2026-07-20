@@ -107,7 +107,14 @@ class CoarseGrainedModel:
         plt.close(fig_pcca_timeseries)
 
     def plot_transition_network(self):
-        print(f'Transition matrix (row-stochastic, in %, cut={self.cut}):')
+        # Transition counts are per analyzed frame (lagtime=1 in the
+        # discretized state sequence), so the resulting percentages are only
+        # comparable across trajectories if they share the same effective
+        # per-analyzed-frame timestep -- warns (doesn't block) if not.
+        effective_dt = self.tica_rff_model.effective_dt()
+        effective_dt_str = 'N/A (see warning above)' if effective_dt is None else effective_dt
+
+        print(f'Transition matrix (row-stochastic, in %, cut={self.cut}, per-step dt={effective_dt_str}):')
         print(self.transition_matrix)
 
         self.pcca_op.compute_state_colors(cut=self.cut)

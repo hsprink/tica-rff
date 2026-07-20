@@ -49,8 +49,12 @@ class TicaRffModel:
             PCCA/the transition network are unaffected and timescale/
             physical-lag reporting just shows up as N/A. E.g.
             dt=[0.002, 0.001], stride=[1, 1], lag=[30, 60] both give 0.06.
-            Nothing else in the pipeline (data loading, TICA/EDMD fitting,
-            PCCA) uses dt at all.
+            Data loading, TICA/EDMD fitting, and PCCA state assignment don't
+            use dt at all. The PCCA transition network is the one exception:
+            its per-step transition probabilities are only comparable across
+            trajectories if dt[i] * stride[i] (effective_dt(); independent of
+            lag) is also consistent -- checked the same lazy, non-blocking
+            way when the network is generated.
     """
 
     def __init__(
@@ -122,16 +126,45 @@ class TicaRffModel:
         self.dir_edmd = Path(f'{self.dir_tica_lag}/rff_params={[self.d_tica, self.scaling, self.p]}')
         self.dir_edmd.mkdir(parents=True, exist_ok=True)
 
+    def effective_dt(self):
+        """
+        The physical time between consecutive *analyzed* (post-stride)
+        frames, i.e. dt[i] * stride[i], which must be the same for every
+        trajectory for the PCCA transition network's per-step transition
+        probabilities to be physically comparable across trajectories --
+        that count is at lagtime=1 in the discretized state sequence (one
+        analyzed frame), independent of the TICA/EDMD fitting `lag`. Returns
+        None (with a printed warning) if inconsistent, same as
+        physical_lag(); the transition network is still computed either way,
+        just without a well-defined single per-step time unit.
+        """
+        n = len(self.traj_paths)
+        dts = self.dt if isinstance(self.dt, list) else [self.dt] * n
+        strides = self.stride if isinstance(self.stride, list) else [self.stride] * n
+
+        effective_dts = [d * s for d, s in zip(dts, strides)]
+        if len(set(effective_dts)) != 1:
+            print(
+                f"Warning: dt {self.dt} and stride {self.stride} give different "
+                f"effective per-analyzed-frame timesteps ({effective_dts}) across "
+                f"trajectories -- the PCCA transition network's per-step transition "
+                f"probabilities are not physically comparable in this case."
+            )
+            return None
+        return effective_dts[0]
+
     def physical_lag(self):
         """
         The physical time gap between X(t) and Y(t+lag), i.e.
         dt[i] * stride[i] * lag[i], which must be the same for every
         trajectory to be well-defined; returns None (with a printed warning)
         if it isn't, rather than raising -- fitting/PCCA/the transition
-        network don't need this value and are unaffected either way. Computed
-        lazily (not at construction time) since dt/stride/lag are otherwise
-        independent of each other and only need to agree when physical-time
-        reporting (timescales, plot titles) is actually requested.
+        network don't need this specific value and are unaffected either way
+        (see effective_dt() for the check that the transition network does
+        care about). Computed lazily (not at construction time) since
+        dt/stride/lag are otherwise independent of each other and only need
+        to agree when physical-time reporting (timescales, plot titles) is
+        actually requested.
         """
         n = len(self.traj_paths)
         dts = self.dt if isinstance(self.dt, list) else [self.dt] * n

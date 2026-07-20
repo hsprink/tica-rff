@@ -36,15 +36,23 @@ Key fields in `tica_rff`:
   `stride`/`lag` are pure index-domain quantities used for data loading and
   fitting — they're never checked against `dt`, and fitting, PCCA, and the
   transition network all run regardless of whether they're physically
-  consistent. `dt` only matters for physical-time reporting (timescales, the
-  "physical lag" in plot titles), computed lazily by
-  `TicaRffModel.physical_lag()`. That method requires `dt[i] * stride[i] *
-  lag[i]` (the actual physical time gap) to be the same for every
-  trajectory; if it isn't, `physical_lag()` returns `None` (with a printed
-  warning) instead of raising, and timescales/physical-lag show up as `N/A`
-  in plots/titles rather than breaking anything. E.g.
-  `dt=[0.002, 0.001], stride=[1, 1], lag=[30, 60]` both give `0.06`, as do
-  `stride=[1, 10], lag=[30, 3]` with a shared `dt`.
+  consistent. `dt` only matters for physical-time reporting, checked lazily
+  (not at construction) in two independent places:
+  - `TicaRffModel.physical_lag()`: requires `dt[i] * stride[i] * lag[i]`
+    (the physical gap between `X(t)` and `Y(t+lag)`) to be the same for
+    every trajectory. Used for timescales and the "physical lag" in plot
+    titles. E.g. `dt=[0.002, 0.001], stride=[1, 1], lag=[30, 60]` both give
+    `0.06`, as do `stride=[1, 10], lag=[30, 3]` with a shared `dt`.
+  - `TicaRffModel.effective_dt()`: requires `dt[i] * stride[i]` (the
+    physical time between consecutive *analyzed* frames) to be the same for
+    every trajectory. This is independent of `lag` — the PCCA transition
+    network counts transitions per analyzed frame, so its per-step
+    percentages are only comparable across trajectories if this holds.
+
+  If either check fails, that method prints a warning and returns `None`
+  instead of raising — the corresponding number just shows up as `N/A`
+  (or the transition network's per-step timestep is reported as undefined),
+  nothing else breaks.
 - `feat_scheme` / `mean_pooling`: **must be set consistently with the actual
   shape of your trajectory files.**
   - `"closest-heavy"`: pairwise closest-heavy-atom distances, already a fixed
