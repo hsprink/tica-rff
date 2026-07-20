@@ -26,18 +26,23 @@ Key fields in `tica_rff`:
 
 - `traj_paths`: list of trajectory files, one per trajectory (`.npy`, or `.npz`
   with a `features` array).
-- `stride` / `lag`: each may be a single int (applied to every trajectory) or
-  a list of ints, one per entry in `traj_paths`. `stride` downsamples each
-  trajectory when loading it; `lag` is the index shift (in already-strided
-  frames) used to pair `X(t)` with `Y(t+lag)` per trajectory. Neither has any
-  physical-time meaning by itself — see `dt` below.
+- `stride` / `lag` / `dt`: each may be a single number (applied to every
+  trajectory) or a list, one per entry in `traj_paths`.
+  - `stride` downsamples each trajectory when loading it.
+  - `lag` is the index shift (in already-strided frames) used to pair `X(t)`
+    with `Y(t+lag)` per trajectory when fitting.
+  - `dt` is the time per *raw* (pre-stride) frame for that trajectory.
 
-  `stride[i] * lag[i]` (the resulting gap in *raw*, pre-stride frames) must
-  be the same for every trajectory — the pipeline raises a clear error
-  otherwise. This is what lets you downsample a long trajectory harder
-  (larger stride) while using a smaller lag to compensate, and still land on
-  the same effective lag as a shorter trajectory kept at `stride=1`: e.g.
-  `stride=[1, 10], lag=[30, 3]` both give a raw-frame gap of 30.
+  `stride`/`lag` are pure index-domain quantities used for data loading and
+  fitting — they're never checked against `dt` at startup, and everything up
+  through PCCA runs regardless of whether they're physically consistent.
+  `dt` only matters once you ask for physical-time reporting (timescales,
+  the "physical lag" in plot titles), which is computed lazily by
+  `TicaRffModel.physical_lag()`. That method requires `dt[i] * stride[i] *
+  lag[i]` (the actual physical time gap) to be the same for every
+  trajectory, and raises `ValueError` there (not at construction) if not.
+  E.g. `dt=[0.002, 0.001], stride=[1, 1], lag=[30, 60]` both give `0.06`, as
+  do `stride=[1, 10], lag=[30, 3]` with a shared `dt`.
 - `feat_scheme` / `mean_pooling`: **must be set consistently with the actual
   shape of your trajectory files.**
   - `"closest-heavy"`: pairwise closest-heavy-atom distances, already a fixed
@@ -55,14 +60,6 @@ Key fields in `tica_rff`:
   reduced to one vector per frame, use `"BioEmu_L1_features_pooled"` with
   `mean_pooling: false`. Using the wrong `feat_scheme` for your data's actual
   dimensionality will fail with a shape-mismatch error at startup.
-- `dt`: time per *raw* (pre-stride) frame — a single value, shared across all
-  trajectories (their raw files are assumed to share the same native frame
-  interval; only how much each is downsampled/shifted varies via
-  stride/lag). This is a plain input you compute yourself; the pipeline does
-  not derive or validate it from stride/lag — only the stride*lag consistency
-  above is checked. Physical lag and timescales are reported using
-  `total_lag * dt`, where `total_lag` is the validated common
-  `stride[i] * lag[i]` value.
 - `d_tica`: number of TICA components to keep and lift with random Fourier
   features. `p`, `scaling`: number of random Fourier features and kernel
   bandwidth for that lift.

@@ -67,7 +67,7 @@ class CoarseGrainedModel:
             f'lag={tica_rff_model.lag}, pcca_{self.n_pcca} timeseries, '
             f'{tica_rff_model.feat_scheme}, n_ev={tica_rff_model.n_ev}'
         )
-        timescales_str = f'timescales:{tica_rff_model.ts_ticarff[1:self.n_pcca]}, physical lag={round(tica_rff_model.total_lag*tica_rff_model.dt, 3)}'
+        timescales_str = f'timescales:{tica_rff_model.ts_ticarff[1:self.n_pcca]}, physical lag={round(tica_rff_model.physical_lag(), 3)}'
 
         # pcca tica clustering plot
         path_fig_pcca_traj = f'{self.dir_exports}/pcca_{self.n_pcca}_clustering{tica_rff_model.n_ev_path_extension}.png'

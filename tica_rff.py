@@ -30,29 +30,24 @@ class TicaRffModel:
         n_eigenfunctions_to_plot: number of leading EDMD eigenfunctions to render in
             plot_eigenfunctions().
 
-        stride, lag: each may be a single int (applied to every trajectory) or
-            a list of ints, one per entry in traj_paths. stride is a pure
-            index-domain downsampling applied when loading each trajectory;
-            lag is the pure index shift (in already-strided frames) used to
-            pair X(t) with Y(t+lag) per trajectory when estimating the
-            transfer operator. Neither carries physical-time meaning by
-            itself -- see dt below.
-
-            stride[i] * lag[i] (the resulting gap in *raw*, pre-stride
-            frames) is required to be the same for every trajectory --
-            __init__ raises ValueError otherwise. This is what lets you, say,
-            downsample a long trajectory harder (larger stride) while using a
-            smaller lag to compensate, and still land on the same effective
-            lag as a shorter trajectory kept at stride=1: e.g.
-            stride=[1, 10], lag=[30, 3] both give a raw-frame gap of 30. The
-            validated common value is stored as self.total_lag.
-        dt: time per *raw* (pre-stride) frame -- a single value shared by all
-            trajectories (their raw files are assumed to share the same
-            native frame interval; only how much each is downsampled/shifted
-            varies). This is a plain input you compute yourself; the pipeline
-            does not derive it from stride/lag. Physical lag is reported as
-            self.total_lag * dt, and get_timescales() is called with
-            lag=self.total_lag (not the possibly per-trajectory self.lag).
+        stride, lag, dt: each may be a single number (applied to every
+            trajectory) or a list, one per entry in traj_paths.
+              - stride: pure index-domain downsampling applied when loading
+                each trajectory.
+              - lag: pure index shift (in already-strided frames) used to
+                pair X(t) with Y(t+lag) per trajectory when estimating the
+                transfer operator.
+              - dt: time per *raw* (pre-stride) frame for that trajectory.
+            None of these three are validated against each other at
+            construction time -- stride/lag are pure index-domain quantities
+            used only for data loading and covariance estimation, and dt only
+            matters for physical-time reporting (physical lag, timescales),
+            which is computed lazily by physical_lag(). That method requires
+            dt[i] * stride[i] * lag[i] to be the same for every trajectory
+            (the actual physical lag time) and raises ValueError otherwise --
+            e.g. dt=[0.002, 0.001], stride=[1, 1], lag=[30, 60] both give
+            0.06. Nothing else in the pipeline (data loading, TICA/EDMD
+            fitting, PCCA) uses dt at all.
     """
 
     def __init__(
@@ -80,31 +75,11 @@ class TicaRffModel:
         self.dir_res = dir_res
         self.traj_paths = [Path(p) for p in traj_paths]
 
-        if isinstance(stride, list) and len(stride) != len(self.traj_paths):
-            raise ValueError(
-                f"stride list (len {len(stride)}) must match traj_paths (len {len(self.traj_paths)})."
-            )
-        if isinstance(lag, list) and len(lag) != len(self.traj_paths):
-            raise ValueError(
-                f"lag list (len {len(lag)}) must match traj_paths (len {len(self.traj_paths)})."
-            )
-
-        # stride[i] * lag[i] is the raw-frame gap between X(t) and Y(t+lag)
-        # for trajectory i, before that trajectory's own stride is applied.
-        # This must be the same for every trajectory -- otherwise `lag`
-        # wouldn't represent the same physical time gap in every trajectory,
-        # even though dt (time per raw frame) is shared across all of them.
-        strides_check = stride if isinstance(stride, list) else [stride] * len(self.traj_paths)
-        lags_check = lag if isinstance(lag, list) else [lag] * len(self.traj_paths)
-        raw_frame_lags = [s * l for s, l in zip(strides_check, lags_check)]
-        if len(set(raw_frame_lags)) != 1:
-            raise ValueError(
-                f"stride {stride} and lag {lag} are inconsistent: stride[i] * lag[i] "
-                f"(the raw-frame gap between X(t) and Y(t+lag)) must be the same for "
-                f"every trajectory, got {raw_frame_lags} for trajectories "
-                f"{[str(p) for p in self.traj_paths]}."
-            )
-        self.total_lag = raw_frame_lags[0]
+        for name, value in (('stride', stride), ('lag', lag), ('dt', dt)):
+            if isinstance(value, list) and len(value) != len(self.traj_paths):
+                raise ValueError(
+                    f"{name} list (len {len(value)}) must match traj_paths (len {len(self.traj_paths)})."
+                )
 
         self.stride = stride
         self.feat_scheme = feat_scheme
@@ -124,8 +99,6 @@ class TicaRffModel:
         self.p = p
         self.scaling = scaling
 
-        # dt is the final, already-physically-meaningful value -- see class
-        # docstring. Not derived from stride (which may now be per-trajectory).
         self.dt = dt
         self.n_ev_path_extension = f'_n_ev={self.n_ev}'
 
@@ -145,6 +118,30 @@ class TicaRffModel:
 
         self.dir_edmd = Path(f'{self.dir_tica_lag}/rff_params={[self.d_tica, self.scaling, self.p]}')
         self.dir_edmd.mkdir(parents=True, exist_ok=True)
+
+    def physical_lag(self):
+        """
+        The physical time gap between X(t) and Y(t+lag), i.e.
+        dt[i] * stride[i] * lag[i] -- required to be the same for every
+        trajectory (raises ValueError otherwise). Computed lazily (not at
+        construction time) since dt/stride/lag are otherwise independent of
+        each other and only need to agree when physical-time reporting
+        (timescales, plot titles) is actually requested.
+        """
+        n = len(self.traj_paths)
+        dts = self.dt if isinstance(self.dt, list) else [self.dt] * n
+        strides = self.stride if isinstance(self.stride, list) else [self.stride] * n
+        lags = self.lag if isinstance(self.lag, list) else [self.lag] * n
+
+        physical_lags = [d * s * l for d, s, l in zip(dts, strides, lags)]
+        if len(set(physical_lags)) != 1:
+            raise ValueError(
+                f"dt {self.dt}, stride {self.stride}, and lag {self.lag} are inconsistent: "
+                f"dt[i] * stride[i] * lag[i] (the physical time gap between X(t) and "
+                f"Y(t+lag)) must be the same for every trajectory, got {physical_lags} "
+                f"for trajectories {[str(p) for p in self.traj_paths]}."
+            )
+        return physical_lags[0]
 
     def load_data(self):
         strides = self.stride if isinstance(self.stride, list) else [self.stride] * len(self.traj_paths)
@@ -224,7 +221,10 @@ class TicaRffModel:
                 save_to_file(self.tica_rff_op, path_edmd_results, overwrite=True)
 
         path_edmd_timescales = self.dir_edmd / Path(f'timescales_lag={self.lag}{self.n_ev_path_extension}.npy')
-        self.ts_ticarff = np.round(np.array(self.tica_rff_op.get_timescales(dt=self.dt, lag=self.total_lag)), 2)
+        # dt=physical_lag(), lag=1: get_timescales' formula only uses the
+        # dt*lag product, and physical_lag() is already that full product
+        # (dt[i]*stride[i]*lag[i], validated equal across trajectories).
+        self.ts_ticarff = np.round(np.array(self.tica_rff_op.get_timescales(dt=self.physical_lag(), lag=1)), 2)
         save_to_file(self.ts_ticarff, path_edmd_timescales)
         return self.tica_rff_op
 
@@ -236,7 +236,7 @@ class TicaRffModel:
             evecs_K, self.Psi, self.domain, W=None, k=self.n_eigenfunctions_to_plot,
             title=(
                 f'd_tica={self.d_tica}, sigma={self.scaling}, p={self.p}, '
-                f'lag={self.lag}, physical lag={round(self.total_lag * self.dt, 3)}, '
+                f'lag={self.lag}, physical lag={round(self.physical_lag(), 3)}, '
                 f'timescales={self.ts_ticarff[1:self.n_eigenfunctions_to_plot+1]}'
             ),
             path=f'{self.dir_edmd}/eigenfunctions_{self.n_eigenfunctions_to_plot}{self.n_ev_path_extension}.png',
