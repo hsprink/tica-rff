@@ -39,7 +39,7 @@ class TicaRffModel:
         lag,
         stride=1,
         feat_scheme='BioEmu_L1_features', # 'BioEmu_L1_features' or 'BioEmu_L1_features_pooled'
-        mean_pooling=False, # after standardization
+        mean_pooling=True, # after standardization
         remove_mean=True,
         load_intermediate_results=True,
         save_intermediate_results=True,
