@@ -5,10 +5,10 @@
         "traj_paths": [
             "paths_here"
         ],
-        "feat_scheme": "closest-heavy",
+        "feat_scheme": "BioEmu_L1_features",
         "lag": 120,
         "stride": 5,
-        "mean_pooling": false,
+        "mean_pooling": true,
         "remove_mean": true,
         "load_intermediate_results": true,
         "save_intermediate_results": true,
