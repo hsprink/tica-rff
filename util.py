@@ -826,9 +826,10 @@ def standardize_and_pool_features(
         mean_pooling: if True and the scheme isn't already pooled, mean-pool
             the standardized per-residue features over residues (via
             mean_pool_standardized_flat) to a single per-frame vector.
-        n_residues: required if mean_pooling is True on an unpooled scheme
-            (needed to reshape the flattened standardized features back to
-            per-residue before pooling).
+        n_residues: number of residues, used to reshape the flattened
+            standardized features back to per-residue before mean-pooling.
+            Auto-derived from data[0].shape[1] for the unpooled scheme if not
+            given explicitly.
         chunk_size: number of frames processed per chunk when computing
             standardization statistics / standardizing (bounds memory use).
 
@@ -844,6 +845,9 @@ def standardize_and_pool_features(
     # Validate input dimensionality and channel count.
     n_channels = data[0].shape[-1]
 
+    if n_residues is None and expected_ndim == 3:
+        n_residues = data[0].shape[1]
+
     for traj_idx, traj in enumerate(data):
         if traj.ndim != expected_ndim:
             raise ValueError(
@@ -855,6 +859,12 @@ def standardize_and_pool_features(
             raise ValueError(
                 f"Trajectory {traj_idx} has {traj.shape[-1]} channels, "
                 f"but the first trajectory has {n_channels}."
+            )
+
+        if expected_ndim == 3 and traj.shape[1] != n_residues:
+            raise ValueError(
+                f"Trajectory {traj_idx} has {traj.shape[1]} residues, "
+                f"but the first trajectory has {n_residues}."
             )
 
     processed_dir = Path(dir_base) / feat_scheme / "processed_features"
