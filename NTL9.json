@@ -7,7 +7,7 @@
         ],
         "feat_scheme": "BioEmu_L1_features",
         "lag": 35,
-        "stride": 10,
+        "stride": 1,
         "mean_pooling": true,
         "remove_mean": true,
         "load_intermediate_results": true,
