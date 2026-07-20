@@ -1,0 +1,28 @@
+{
+    "tica_rff": {
+        "dir_res": "Results/BBA",
+        "dt": 0.001,
+        "traj_paths": [
+            "paths_here"
+        ],
+        "feat_scheme": "closest-heavy",
+        "lag": 120,
+        "stride": 5,
+        "mean_pooling": false,
+        "remove_mean": true,
+        "load_intermediate_results": true,
+        "save_intermediate_results": true,
+        "batchwise_tica": true,
+        "symmetrize": true,
+        "tol_whitening": 1e-8,
+        "n_ev": 10,
+        "n_eigenfunctions_to_plot": 3,
+        "d_tica": 9,
+        "p": 300,
+        "scaling": 5
+    },
+    "coarse_grained_model": {
+        "n_pcca": 3,
+        "cut": 0.6
+    }
+}
